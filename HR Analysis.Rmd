@@ -1,0 +1,291 @@
+---
+title: "HR Analysis"
+author: "Consagous Technologies"
+date: "26 April 2019"
+output: pdf_document
+---
+
+# Objective: To predict which valuable employees will leave next. 
+
+###  Fields in the dataset include:
+### Employee satisfaction level
+### Last evaluation
+### Number of projects
+### Average monthly hours
+### Time spent at the company
+### Whether they have had a work accident
+### Whether they have had a promotion in the last 5 years
+### Department
+### Salary
+### Whether the employee has left
+
+# Required Library
+```{r}
+library(dplyr)
+library(ROSE)
+library(ggplot2)
+library(ROCR)
+library(caret)
+library(tree)
+library(randomForest)
+```
+
+## Read Data
+```{r}
+setwd("/home/consagous/Documents/Predictive Model POC")
+md <- read.csv("hr_train.csv")
+str(md)
+```
+
+## Overview the Balancing of Data
+```{r}
+table(md$left)
+```
+
+### Here data is imbalance so balanced data set with over-sampling
+
+```{r}
+over.md <- ovun.sample(left~., data=md, 
+                                  p=0.5, seed=1, 
+                                  method="over")$data
+table(over.md$left)
+```
+
+### Now the frequency of both the classes are somewhere same
+
+# Logistic Regression
+
+### Making Dummy Variables
+
+```{r}
+str(over.md)
+```
+### There are two variables which are categorical so we convert them in dummy variables
+
+```{r}
+table(over.md$sales)
+```
+
+### There are 10 classes in variable, so we are making 9 dummy variable and taking least 
+###frequency variabole manaagement as base category.
+
+```{r}
+over.md <- over.md %>% 
+  mutate(Support = as.numeric(sales == "support"),
+        Technical =  as.numeric(sales == "technical"),
+        Sales = as.numeric(sales == "sales"),
+        IT = as.numeric(sales == "IT"),
+        Mktg = as.numeric(sales == "marketing"),
+        Prod_Mgt = as.numeric(sales == "product_mng"),
+        Acct = as.numeric(sales == "accounting"),
+        RnD = as.numeric(sales == "RandD"),
+        HR = as.numeric(sales == "hr")) %>% 
+  select(-sales)
+```
+
+### Similar with variable "salary"
+
+```{r}
+table(over.md$salary)
+
+over.md <- over.md %>% 
+  mutate(Low_Salary = as.numeric(salary == "low"),
+         Med_Salary = as.numeric(salary == "medium")) %>% 
+  select(-salary)
+```
+
+### Now look at the structure
+
+```{r}
+str(over.md)
+```
+
+### Now all variables are in numeric form
+
+## Fit the Model
+```{r}
+fit <- glm(left~., data = over.md, family = "binomial")
+summary(fit)
+```
+
+```{r}
+fit <- glm(left~. -IT, data = over.md, family = "binomial")
+summary(fit)
+```
+
+```{r}
+fit <- glm(left~. -IT -RnD, data = over.md, family = "binomial")
+summary(fit)
+```
+
+```{r}
+fit <- glm(left~. -IT -RnD -Prod_Mgt, data = over.md, family = "binomial")
+summary(fit)
+```
+
+## Final Model
+
+```{r}
+model <- glm(left ~ satisfaction_level + last_evaluation + number_project + 
+                       average_montly_hours + time_spend_company + Work_accident + 
+                       promotion_last_5years + Support + Technical + Sales + 
+                       Mktg + Acct + HR + Low_Salary + Med_Salary, data = over.md, family = "binomial")
+```
+
+## Prediction with training data
+```{r}
+over.md$score=predict(model, newdata=over.md,type = "response")
+head(over.md$left)
+head(over.md$score)
+```
+
+## Overview through the graph
+```{r}
+library(ggplot2)
+ggplot(over.md,aes(y=left,x=score,color=factor(left)))+
+  geom_point()+geom_jitter()
+```
+
+### Here to much overlapping in prediction it could be improved by taking set.seed but
+### here we are proceed with same
+
+## Consideration of Cutoff Value
+```{r}
+ROCRPred <- prediction(over.md$score, over.md$left)
+ROCRPerf <- performance(ROCRPred, "tpr", "fpr")
+plot(ROCRPerf, colorize=TRUE, print.cutoffs.at=seq(.1, by = 0.1))
+```
+
+### Here 0.5 looks better cutoff for this model
+
+## Area under the curve
+
+```{r}
+auc <- performance(ROCRPred, "auc")
+auc <- unlist(slot(auc, "y.values"))
+auc <- round(auc,4)
+auc
+```
+
+## Making Predictions
+
+```{r}
+res <- predict(model, over.md, type = "response")
+PredictedValue <- res>.5
+pv <- as.numeric(PredictedValue)
+pv <- as.factor(pv)
+over.md$left <- as.factor(over.md$left)
+confusionMatrix(pv, over.md$left)
+```
+
+### Result: The accuracy of Logistic Regression model is 68.82%, and Sensitivity(True Positive Rate)
+### is 68.18% and Specificity(True Negative Rate) is 69.45%, the difference between them is minimum
+### means model is good.
+
+## Prediction for Test Data:
+
+```{r}
+test.md <- read.csv("hr_test.csv")
+str(test.md)
+```
+
+```{r}
+test.data <- test.md %>% 
+  mutate(Support = as.numeric(sales == "support"),
+         Technical =  as.numeric(sales == "technical"),
+         Sales = as.numeric(sales == "sales"),
+         IT = as.numeric(sales == "IT"),
+         Mktg = as.numeric(sales == "marketing"),
+         Prod_Mgt = as.numeric(sales == "product_mng"),
+         Acct = as.numeric(sales == "accounting"),
+         RnD = as.numeric(sales == "RandD"),
+         HR = as.numeric(sales == "hr")) %>% 
+  select(-sales)
+
+test.data<- test.data %>% 
+  mutate(Low_Salary = as.numeric(salary == "low"),
+         Med_Salary = as.numeric(salary == "medium")) %>% 
+  select(-salary)
+
+str(test.data)
+```
+
+```{r}
+res_test <- predict(model, newdata =test.data, type = "response")
+PredictedValue <- res_test>.5
+pv <- as.numeric(PredictedValue)
+table(pv)
+```
+
+### Through testing data the prediction of our model shows that out of 4500 employees, 1946 employees
+### may leave next.
+
+# Decision Tree Model
+
+```{r}
+str(md)
+md$left <- as.factor(md$left)
+```
+
+## Making of DT Model
+```{r}
+tree.hr=tree(left~.,data=md)
+tree.hr
+```
+
+```{r}
+plot(tree.hr)
+text(tree.hr,pretty=0)
+```
+
+
+### Summary of DT Model
+```{r}
+summary(tree.hr)
+```
+### Here the misclassification error is only 13.04% with 8 terminal nodes.
+
+
+```{r}
+tree.pred=predict(tree.hr,newdata=md,type="class")
+table(tree.pred, md$left)
+```
+
+## Prediction for Test Data:
+
+```{r}
+tree.pred=predict(tree.hr,test.md,type="class")
+table(tree.pred)
+```
+
+### Through testing data the prediction of our DT model shows that out of 4500 employees, 1052 employees
+### may leave next.
+
+
+# Random Forest Model
+
+```{r}
+class_hr=randomForest(left~.,data=md)
+class_hr
+```
+### ### The RF Model shows the misclassification error 12.58% only.
+
+## Prediction for Test Data:
+```{r}
+forest.pred=predict(class_hr,newdata=test.md)
+table(forest.pred)
+```
+### Through testing data the prediction of our RF model shows that out of 4500 employees, 1078 employees
+### may leave next.
+
+
+## Recommandation:
+### The RF Model shows the misclassification error 12.58% only which is less than both LR Model (31.18%)
+### and DT Model (13.69%)
+
+## So the RF model is recommended for HR Analysis.
+
+
+# NOTE:
+
+# Still there is scope of optimization of models there, Here in this POC we have not applied.
